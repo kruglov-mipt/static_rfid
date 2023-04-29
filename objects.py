@@ -4,6 +4,12 @@ import numpy as np
 import epcstd as std
 from simulator import Kernel
 
+
+# ===========================================================================
+class SlotStatus(enum.Enum):
+    COLLISION = 'collision'
+    EMPTY = 'empty'
+
 # ===========================================================================
 # Reader States
 # ===========================================================================
@@ -335,6 +341,7 @@ class Reader:
 
     # Round settings
     q = 4
+    current_q = q
     upDn = std.UpDn.NO_CHANGE
     tag_encoding = None
     trext = False
@@ -394,6 +401,23 @@ class Reader:
     def turn_off(self):
         self._time_last_turned_on = None
         return self._state.handle_turn_off(self)
+    
+    def manage_query_adjust(self, slot_status):
+        if slot_status == SlotStatus.COLLISION:
+            self.current_q += 0.25
+            if round(self.current_q) > self.q:
+                self.upDn = std.UpDn.INCREASE
+                self.set_state(Reader.State.QADJUST)
+                self.state.handle_query_adjust(self)
+
+        if slot_status == SlotStatus.EMPTY:
+            self.current_q -= 0.25
+            if round(self.current_q) < self.q:
+                self.upDn = std.UpDn.DECREASE
+                self.set_state(Reader.State.QADJUST)
+                self.state.handle_query_adjust(self)
+
+
     
     # Round management
 
@@ -798,17 +822,20 @@ class Transaction(object):
         #       no matter of SNR. Try to implement this.
         
         if len(self.replies) == 0:
-            # self._reader.upDn = std.UpDn.DECREASE
-            # self._reader.set_state(Reader.State.QADJUST)
-            # self._reader._state.handle_query_adjust(self._reader)
+            if not self.reader.qadjust_subround:
+                # self._reader.upDn = std.UpDn.DECREASE
+                # self._reader.set_state(Reader.State.QADJUST)
+                # self._reader._state.handle_query_adjust(self._reader)
+                self._reader.manage_query_adjust(SlotStatus.EMPTY)
             return None, None
         
         if len(self.replies) > 1:
             if not self.reader.qadjust_subround:
-                print('collision!')
-                self._reader.upDn = std.UpDn.INCREASE
-                self._reader.set_state(Reader.State.QADJUST)
-                self._reader._state.handle_query_adjust(self._reader)
+                #print('collision!')
+                # self._reader.upDn = std.UpDn.INCREASE
+                # self._reader.set_state(Reader.State.QADJUST)
+                # self._reader._state.handle_query_adjust(self._reader)
+                self._reader.manage_query_adjust(SlotStatus.COLLISION)
             return None, None
 
         tag, frame = self.replies[0]
@@ -855,7 +882,8 @@ def build_transaction(kernel, reader, reader_frame):
     now = kernel.time
     #print(now)
     trans = Transaction(reader, reader_frame, tag_frames, now)
-    #print(trans.command.command)
+    if isinstance(trans.command.command, std.QueryAdjust):
+        print(trans.command.command)
     return trans
 
 def finish_transaction(kernel, transaction):
