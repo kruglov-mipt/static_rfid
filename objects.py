@@ -90,6 +90,9 @@ class _ReaderQuery(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.single_slots = 0
+        reader.idle_slots = 0
+        reader.collision_slots = 0
         reader.last_rn = None
         cmd = std.Query(reader.dr, reader.tag_encoding, reader.trext,
                         reader.sel, reader.session, reader.target, reader.q)
@@ -266,6 +269,8 @@ class _ReaderRound:
             yield _ReaderSlot(self, 0, Reader.State.QUERY)
             reader.qadjust_subround = False
             for i in range(1, round(pow(2, reader.q))):
+                if i == round(round(pow(2, reader.q)) / 5):
+                    reader.handle_chen(i)
                 if reader.state == Reader.State.QADJUST:
                     reader.qadjust_subround = True
                     yield _ReaderSlot(self, i, Reader.State.QADJUST)
@@ -348,6 +353,12 @@ class Reader:
     read_tid_words_num = None
     epc_bank = []
     
+    # Chen algorythm
+    collision_slots = 0
+    idle_slots = 0
+    single_slots = 0
+
+
     def __init__(self, kernel=None):
         self.kernel = kernel
         self._state = Reader.State.OFF
@@ -416,6 +427,12 @@ class Reader:
                 slot = self._round.next_slot()
         return slot
     
+    def handle_chen(self, i):
+        n = round((self.single_slots + 2.39 * self.collision_slots) * round(pow(2, self.q)/ i))
+        if n > 0:
+            q_optimal = round(np.log2(1.72 * n))
+            if q_optimal != self.q:
+                self.q = q_optimal 
 
 class Tag:
     class State(enum.Enum):
@@ -796,21 +813,24 @@ class Transaction(object):
     def received_tag_frame(self):
         # NOTE: if two or more tags reply, their reply is treated as collision
         #       no matter of SNR. Try to implement this.
-        
         if len(self.replies) == 0:
             # self._reader.upDn = std.UpDn.DECREASE
             # self._reader.set_state(Reader.State.QADJUST)
             # self._reader._state.handle_query_adjust(self._reader)
+            self.reader.idle_slots += 1
             return None, None
         
         if len(self.replies) > 1:
-            if not self.reader.qadjust_subround:
-                print('collision!')
-                self._reader.upDn = std.UpDn.INCREASE
-                self._reader.set_state(Reader.State.QADJUST)
-                self._reader._state.handle_query_adjust(self._reader)
+            # if not self.reader.qadjust_subround:
+            #     print('collision!')
+            #     self._reader.upDn = std.UpDn.INCREASE
+            #     self._reader.set_state(Reader.State.QADJUST)
+            #     self._reader._state.handle_query_adjust(self._reader)
+            self.reader.collision_slots += 1
             return None, None
-
+        
+        if isinstance(self.replies[0][1].reply, std.QueryReply):
+            self.reader.single_slots += 1
         tag, frame = self.replies[0]
 
         return (tag, frame) 
@@ -885,7 +905,7 @@ def simulate_tags():
 
     # 0) Building the model
     model = Model()
-    model.max_tags_num = 800
+    model.max_tags_num = 400
 
     # 1) Building the reader
     reader = Reader()
