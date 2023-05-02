@@ -404,14 +404,14 @@ class Reader:
     
     def manage_query_adjust(self, slot_status):
         if slot_status == SlotStatus.COLLISION:
-            self.current_q += 0.25
+            self.current_q += 0.21
             if round(self.current_q) > self.q:
                 self.upDn = std.UpDn.INCREASE
                 self.set_state(Reader.State.QADJUST)
                 self.state.handle_query_adjust(self)
 
         if slot_status == SlotStatus.EMPTY:
-            self.current_q -= 0.25
+            self.current_q -= 0.15
             if round(self.current_q) < self.q:
                 self.upDn = std.UpDn.DECREASE
                 self.set_state(Reader.State.QADJUST)
@@ -913,7 +913,7 @@ def simulate_tags():
 
     # 0) Building the model
     model = Model()
-    model.max_tags_num = 800
+    model.max_tags_num = 400
 
     # 1) Building the reader
     reader = Reader()
