@@ -269,6 +269,8 @@ class MemoryBank(Enum):
 
 
 class CommandCode(Enum):
+    QUERY_ESTIMATE = ('0101', 'QueryEstimate')
+    QUERY_ESTIMATE_REP = ('1010', 'QueryEstimateRep')
     QUERY = ('1000', 'Query')
     QUERY_REP = ('00', 'QueryRep')
     QUERY_ADJUST = ('1001', 'QueryAdjust')
@@ -317,6 +319,7 @@ class StdParams:
     trcal = 3.125e-05
     delim = 12.5e-6
     Q = 4
+    l = 1
     divide_ratio = DivideRatio.DR_8
     tag_encoding = TagEncoding.FM0
     sel = SelFlag.ALL
@@ -409,6 +412,29 @@ class Command:
     def bitlen(self):
         s = self.encode()
         return len(s)
+
+
+class QueryEstimate(Command):
+    def __init__(self, l = None, m = None):
+        super().__init__(CommandCode.QUERY_ESTIMATE)
+        self.l = l if l is not None else stdParams.l
+        self.m = m if m is not None else stdParams.tag_encoding
+    def encode(self):
+        return (self.code.code + self.m.code + encode_int(self.l, 4))
+
+    def __str__(self):
+        return "{o.code}{{l({o.l})}},{o.m}".format(o=self)
+
+
+class QueryEstimateRep(Command):
+    def __init__(self):
+        super().__init__(CommandCode.QUERY_ESTIMATE_REP)
+
+    def encode(self):
+        return self.code.code
+
+    def __str__(self):
+        return "{o.code}".format(o=self)
 
 
 class Query(Command):
@@ -520,6 +546,7 @@ class ReplyType(Enum):
     ACK_REPLY = 1
     REQRN_REPLY = 2
     READ_REPLY = 3
+    QUERY_ESTIMATE_REPLY = 4
 
 
 class Reply:
@@ -534,6 +561,19 @@ class Reply:
     @property
     def reply_type(self):
         return self.__type
+
+
+class QueryEstimateReply(Reply):
+    def __init__(self, sequence):
+        super().__init__(ReplyType.QUERY_ESTIMATE_REPLY)
+        self.sequence = sequence
+
+    @property
+    def bitlen(self):
+        return 64
+
+    def __str__(self):
+        return "Reply({o.sequence})".format(o=self)
 
 
 class QueryReply(Reply):
@@ -861,6 +901,14 @@ def command_duration(command_code,
     else:
         raise ValueError("unrecognized command code = {}".format(command_code))
 
+def query_estimate_duration(tari=None, rtcal=None, trcal=None, delim=None,
+                       l=None):
+    return reader_frame_duration(QueryEstimate(l), tari, rtcal, trcal,
+                                 delim)
+
+def query_estimate_rep_duration(tari=None, rtcal=None, trcal=None, delim=None):
+    return reader_frame_duration(QueryEstimate(), tari, rtcal, trcal,
+                                 delim)
 
 # noinspection PyTypeChecker
 def query_duration(tari=None, rtcal=None, trcal=None, delim=None, dr=None,

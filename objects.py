@@ -3,12 +3,18 @@ import itertools
 import numpy as np
 import epcstd as std
 from simulator import Kernel
+import math
 
 
 # ===========================================================================
 class SlotStatus(enum.Enum):
     COLLISION = 'collision'
     EMPTY = 'empty'
+
+
+class ReaderPhase(enum.Enum):
+    ESTIMATION = 'estimation'
+    IDENTIFIATION = 'identification'
 
 # ===========================================================================
 # Reader States
@@ -48,6 +54,9 @@ class _ReaderState:
     
     def handle_query_adjust(self, reader):
         raise NotImplementedError
+    
+    def handle_query_estimate(self, reader):
+        raise NotImplementedError
 
 
 class _ReaderOFF(_ReaderState):
@@ -79,6 +88,9 @@ class _ReaderOFF(_ReaderState):
         return None  # Any reply ignored
     
     def handle_query_adjust(self, reader):
+        return None  # Can not send commands when off
+    
+    def handle_query_estimate(self, reader):
         return None  # Can not send commands when off
 
 
@@ -121,6 +133,9 @@ class _ReaderQuery(_ReaderState):
     
     def handle_query_adjust(self, reader):
         raise RuntimeError("unexpected QADJUST in QUERY state")
+    
+    def handle_query_estimate(self, reader):
+        raise RuntimeError("unexpected QueryEstimate in QUERY state")
 
     
 class _ReaderQREP(_ReaderState):
@@ -161,6 +176,9 @@ class _ReaderQREP(_ReaderState):
     def handle_query_adjust(self, reader):
         raise RuntimeError("unexpected QADJUST in QREP state")
     
+    def handle_query_estimate(self, reader):
+        raise RuntimeError("unexpected QueryEstimate in QREP state")
+    
 
 class _ReaderQADJUST(_ReaderState):
     def __init__(self): super().__init__('QADJUST')
@@ -175,7 +193,7 @@ class _ReaderQADJUST(_ReaderState):
 
     def enter(self, reader):
         cmd = std.QueryAdjust(reader.session, reader.upDn)
-        return std.ReaderFrame(reader.preamble, cmd)
+        return std.ReaderFrame(reader.sync, cmd)
 
     def handle_turn_on(self, reader): return None
 
@@ -196,10 +214,9 @@ class _ReaderQADJUST(_ReaderState):
 
     def handle_ack_reply(self, reader, frame):
         raise RuntimeError("unexpected AckReply in QADJUST state")
-    
-    def handle_query_adjust(self, reader):
-        reader.q = reader.q + reader.upDn.eval()
-        #reader.set_state(Reader.State.QREP)
+
+    def handle_query_estimate(self, reader):
+        raise RuntimeError("unexpected QueryEstimate in QADJUST state")
 
 
 class _ReaderACK(_ReaderState):
@@ -239,6 +256,131 @@ class _ReaderACK(_ReaderState):
 
     def handle_query_adjust(self, reader):
         raise RuntimeError("unexpected QADJUST in ACK state")
+    
+    def handle_query_estimate(self, reader):
+        raise RuntimeError("unexpected QueryEstimate in ACK state")
+
+
+class _ReaderQueryEstimate(_ReaderState):
+        def __init__(self): super().__init__('QUERYESTIMATE')
+
+        def get_timeout(self, reader):
+            t_cmd = std.query_estimate_duration(reader.tari, reader.rtcal, reader.trcal,
+                                        reader.delim, reader.l)
+            t1 = std.link_t1_max(reader.rtcal, reader.trcal, reader.tag_encoding, reader.dr,
+                                reader.temp)
+            t3 = std.link_t3()
+            return t_cmd + t1 + t3
+
+        def enter(self, reader):
+            reader.init_sequence()
+            cmd = std.QueryEstimate(reader.l)
+            return std.ReaderFrame(reader.sync, cmd)
+
+        def handle_turn_on(self, reader): return None
+
+        def handle_turn_off(self, reader):
+            return reader.set_state(Reader.State.OFF)
+
+        def handle_timeout(self, reader):
+            slot = reader.next_slot()
+            return reader.set_state(slot.first_state)
+
+        def handle_query_reply(self, reader, frame):
+            reader.last_rn = frame.reply.rn
+            return reader.set_state(Reader.State.ACK)
+
+        def handle_ack_reply(self, reader, frame):
+            raise RuntimeError("unexpected AckReply in QUERYESTIMATE state")
+        
+        def handle_query_adjust(self, reader):
+            raise RuntimeError("unexpected QueryAdjustReply in QUERYESTIMATE state")
+
+        def handle_query_estimate(self, reader):
+            reader.current_l += 1
+            if reader.current_l == reader.l:
+                for i in reader.sequence:
+                    if i != 0:
+                        reader.rr += 1
+
+                reader.rr = reader.rr / (reader.l * 64)
+            
+                if reader.rr < 0.9:
+                    mu = np.log(1 / (1 - reader.rr))
+                    n = np.floor(64 * reader.l * mu)
+                    reader.n_tags = n
+                    q = np.floor(np.log2( reader.n_tags / 0.368 ))
+                    reader.q = int(q)
+                    
+                    reader.reader_phase = ReaderPhase.IDENTIFIATION
+                    return reader.set_state(Reader.State.QUERY)
+                    ## do smthing with next state Query
+                else:
+                    reader.l = reader.l * 2
+                    reader.current_l = 0
+                    return reader.set_state(Reader.State.QUERYESTIMATE) 
+            else:
+                return reader.set_state(Reader.State.QUERYESTIMATEREP)
+
+class _ReaderQueryEstimateRep(_ReaderState):
+        def __init__(self): super().__init__('QUERYESTIMATEREP')
+
+        def get_timeout(self, reader):
+            t_cmd = std.query_estimate_rep_duration(reader.tari, reader.rtcal, reader.trcal,
+                                        reader.delim)
+            t1 = std.link_t1_max(reader.rtcal, reader.trcal, reader.dr,
+                                reader.temp)
+            t3 = std.link_t3()
+            return t_cmd + t1 + t3
+
+        def enter(self, reader):
+            cmd = std.QueryEstimateRep()
+            return std.ReaderFrame(reader.sync, cmd)
+
+        def handle_turn_on(self, reader): return None
+
+        def handle_turn_off(self, reader):
+            return reader.set_state(Reader.State.OFF)
+
+        def handle_timeout(self, reader):
+            slot = reader.next_slot()
+            return reader.set_state(slot.first_state)
+
+        def handle_query_reply(self, reader, frame):
+            reader.last_rn = frame.reply.rn
+            return reader.set_state(Reader.State.ACK)
+
+        def handle_ack_reply(self, reader, frame):
+            raise RuntimeError("unexpected AckReply in QUERYESTIMATEREP state")
+        
+        def handle_query_adjust(self, reader):
+            raise RuntimeError("unexpected QueryAdjustReply in QUERYESTIMATEREP state")
+
+        def handle_query_estimate(self, reader):
+            reader.current_l += 1
+            if reader.current_l == reader.l:
+                for i in reader.sequence:
+                    if i != 0:
+                        reader.rr += 1
+
+                reader.rr = reader.rr / (reader.l * 64)
+                if reader.rr < 0.9:
+                    mu = np.log(1 / (1 - reader.rr))
+                    n = np.floor(64 * reader.l * mu)
+                    reader.n_tags = n
+                    q = np.floor(np.log2( reader.n_tags / 0.368 ))
+                    reader.q = int(q)
+                    reader.reader_phase = ReaderPhase.IDENTIFIATION
+                    reader.stop_round()
+                    return reader.set_state(Reader.State.QUERY)
+                    ## do smthing with next state Query
+                else:
+                    reader.l = reader.l * 2
+                    reader.current_l = 0
+                    return reader.set_state(Reader.State.QUERYESTIMATE) 
+            else:
+                return reader.set_state(Reader.State.QUERYESTIMATEREP)
+               
 
 
 # ===========================================================================
@@ -269,18 +411,27 @@ class _ReaderRound:
             # yield _ReaderSlot(self, 0, Reader.State.QUERY)
             # for i in range(1, round(pow(2, reader.q))):
             #     yield _ReaderSlot(self, i, Reader.State.QREP)
-            yield _ReaderSlot(self, 0, Reader.State.QUERY)
-            reader.qadjust_subround = False
-            for i in range(1, round(pow(2, reader.q))):
-                if reader.state == Reader.State.QADJUST:
-                    reader.qadjust_subround = True
-                    yield _ReaderSlot(self, i, Reader.State.QADJUST)
-                    for j in range(1, round(pow(2, reader.q))):
-                        yield _ReaderSlot(self, j, Reader.State.QREP)
-                    break
-                else:    
-                    yield _ReaderSlot(self, i, Reader.State.QREP)
-                    
+            if reader.reader_phase == ReaderPhase.ESTIMATION:
+                yield _ReaderSlot(self, 0 ,Reader.State.QUERYESTIMATE)
+                for i in range (1, reader.l):
+                    yield _ReaderSlot(self, i, Reader.State.QUERYESTIMATEREP)
+
+
+            if reader.reader_phase == ReaderPhase.IDENTIFIATION:
+                yield _ReaderSlot(self, 0, Reader.State.QUERY)
+                reader.qadjust_subround = False
+                for i in range(1, round(pow(2, reader.q))):
+                    if reader.state == Reader.State.QADJUST:
+                        reader.qadjust_subround = True
+                        yield _ReaderSlot(self, i, Reader.State.QADJUST)
+                        for j in range(1, round(pow(2, reader.q))):
+                            yield _ReaderSlot(self, j, Reader.State.QREP)
+                        break
+                    else:    
+                        yield _ReaderSlot(self, i, Reader.State.QREP)
+
+            
+
         self._reader = reader
         self._slots = slots_gen()
         self._slot = None
@@ -306,6 +457,8 @@ class Reader:
         QREP = _ReaderQREP()
         QADJUST = _ReaderQADJUST()
         ACK = _ReaderACK()
+        QUERYESTIMATE = _ReaderQueryEstimate()
+        QUERYESTIMATEREP = _ReaderQueryEstimateRep()
 
         def __init__(self, obj):
             self.__obj__ = obj
@@ -321,7 +474,8 @@ class Reader:
                         'handle_query_reply', 
                         'handle_timeout',
                         'handle_ack_reply',
-                        'handle_query_adjust'
+                        'handle_query_adjust',
+                        'handle_query_estimate'
                         }
             if item in children:
                 return getattr(self.__obj__, item)
@@ -340,6 +494,12 @@ class Reader:
     qadjust_subround = False
 
     # Round settings
+    reader_phase = ReaderPhase.ESTIMATION
+    l = 1
+    current_l = 0
+    sequence = []
+    rr = 0
+    n_tags = 0
     q = 4
     current_q = q
     upDn = std.UpDn.NO_CHANGE
@@ -373,6 +533,11 @@ class Reader:
     def set_state(self, new_state):
         self._state = new_state
         return new_state.enter(self)
+    
+    def init_sequence(self):
+        self.sequence = []
+        for i in range(0, self.l * 64):
+            self.sequence.append(0)
 
     @property
     def preamble(self):
@@ -383,6 +548,8 @@ class Reader:
         return std.ReaderSync(self.tari, self.rtcal, self.delim)
     
     def receive(self, tag_frame):
+        if isinstance(tag_frame, list):
+            return self._state.handle_query_estimate(self)
         assert isinstance(tag_frame, std.TagFrame)
         reply = tag_frame.reply
         if isinstance(reply, std.QueryReply):
@@ -404,20 +571,21 @@ class Reader:
     
     def manage_query_adjust(self, slot_status):
         if slot_status == SlotStatus.COLLISION:
-            self.current_q += 0.25
+            self.current_q += 0.21183
             if round(self.current_q) > self.q:
                 self.upDn = std.UpDn.INCREASE
                 self.set_state(Reader.State.QADJUST)
                 self.state.handle_query_adjust(self)
 
         if slot_status == SlotStatus.EMPTY:
-            self.current_q -= 0.25
+            self.current_q -= 0.15
             if round(self.current_q) < self.q:
                 self.upDn = std.UpDn.DECREASE
                 self.set_state(Reader.State.QADJUST)
                 self.state.handle_query_adjust(self)
 
-
+    def manage_query_estimate():
+        pass
     
     # Round management
 
@@ -465,6 +633,8 @@ class Tag:
         # Internal registers and flags
         self._state = Tag.State.OFF
         self._slot_counter = 0
+        self._estimate_slot_number = 0
+        self._sequence = []
         self._q = 0
         self._rn = 0
         self._sl = False
@@ -484,7 +654,6 @@ class Tag:
         self._encoding = std.TagEncoding.FM0
         self._blf = std.get_blf(std.DivideRatio.DR_8, 12.5e-6*6)
         self._trext = False
-
 
     @property
     def encoding(self):
@@ -658,6 +827,33 @@ class Tag:
             self._set_state(Tag.State.ARBITRATE)
             return None
 
+    def process_query_estimate(self, frame):
+        assert isinstance(frame, std.ReaderFrame)
+        assert isinstance(frame.command, std.QueryEstimate)
+        cmd = frame.command
+        self._encoding = cmd.m
+        self._preamble = std.create_tag_preamble(self._encoding)
+        v = np.random.randint(0, self.tid_bitlen * cmd.l)
+        bit =  v % self.tid_bitlen
+        self._sequence = []
+        for i in range(0, self.tid_bitlen):
+            if i == bit:
+                self._sequence.append(1)
+            else:
+                self._sequence.append(0) 
+        self._estimate_slot_number = math.floor(v / self.tid_bitlen)
+        if self._estimate_slot_number == 0:
+            self._estimate_slot_number = 1000
+            return std.TagFrame(self._preamble, std.QueryEstimateReply(self._sequence))
+
+    def process_query_estimate_rep(self, frame):
+        assert isinstance(frame, std.ReaderFrame)
+        assert isinstance(frame.command, std.QueryEstimateRep)    
+        self._estimate_slot_number -= 1
+        if self._estimate_slot_number == 0:
+            self._estimate_slot_number = 1000
+            return std.TagFrame(self._preamble, std.QueryEstimateReply(self._sequence))
+
     def receive(self, frame):
         assert isinstance(frame, std.ReaderFrame)
         cmd = frame.command
@@ -669,6 +865,10 @@ class Tag:
             return self.process_query_adjust(frame)
         elif isinstance(cmd, std.Ack):
             return self.process_ack(frame)
+        elif isinstance(cmd, std.QueryEstimate):
+            return self.process_query_estimate(frame)
+        elif isinstance(cmd, std.QueryEstimateRep):
+            return self.process_query_estimate_rep(frame)
         else:
             raise TypeError("unexpected command '{}'".format(frame))
 
@@ -729,7 +929,6 @@ def inc_hex_string(s):
 class Transaction(object):
     timeout_event_id = None
     response_start_event_id = None
-
     def __init__(self, reader, command, replies, time):
         self._command = command
         self._reader = reader
@@ -818,9 +1017,22 @@ class Transaction(object):
         return self._reader_rx_powers
 
     def received_tag_frame(self):
+
         # NOTE: if two or more tags reply, their reply is treated as collision
         #       no matter of SNR. Try to implement this.
+        #print(self.replies[0][1])
         
+        
+        #if isinstance(self.replies[0][1].reply, std.QueryEstimateReply):
+        if self._reader.reader_phase == ReaderPhase.ESTIMATION:
+            for reply in self.replies:
+                for index in range (0, len(reply[1].reply.sequence)):
+                    self._reader.sequence[64 * self._reader.current_l + index] += reply[1].reply.sequence[index]
+            return None, self._reader.sequence
+
+
+
+
         if len(self.replies) == 0:
             if not self.reader.qadjust_subround:
                 # self._reader.upDn = std.UpDn.DECREASE
@@ -882,15 +1094,14 @@ def build_transaction(kernel, reader, reader_frame):
     now = kernel.time
     #print(now)
     trans = Transaction(reader, reader_frame, tag_frames, now)
-    if isinstance(trans.command.command, std.QueryAdjust):
-        print(trans.command.command)
+    # if isinstance(trans.command.command, std.QueryAdjust):
+    #     print(trans.command.command)
     return trans
 
 def finish_transaction(kernel, transaction):
     ctx = kernel.context
     reader = ctx.reader
     assert transaction is ctx.transaction
-
     tag, frame = transaction.received_tag_frame()
 
     if frame is not None:
@@ -905,37 +1116,47 @@ def finish_transaction(kernel, transaction):
     ctx.transaction = build_transaction(kernel, reader, cmd_frame)
     ctx.transaction.timeout_event_id = kernel.schedule(
         transaction.duration, finish_transaction, ctx.transaction)
-    #if isinstance(kernel.context.transaction.command.command, std.Query):
+    # if isinstance(kernel.context.transaction.command.command, std.QueryEstimate):
+    #    print(kernel.context.transaction.command.command)
+    # if isinstance(kernel.context.transaction.command.command, std.QueryEstimateRep):
     #    print(kernel.context.transaction.command.command)
 
 
-def simulate_tags():
+    if isinstance(kernel.context.transaction.command.command, std.Query):
+       print(kernel.context.transaction.command.command)
+    if isinstance(kernel.context.transaction.command.command, std.QueryAdjust):
+       print(kernel.context.transaction.command.command)
+    
 
-    # 0) Building the model
-    model = Model()
-    model.max_tags_num = 800
 
-    # 1) Building the reader
-    reader = Reader()
-    model.reader = reader
 
-    # 2) Building tags
-    tag_generator = Generator()
-    tags = []
+# def simulate_tags():
 
-    for i in range(0, model.max_tags_num):
-        tag = tag_generator.create_tag(i)
-        tag.setup()
-        tag._power_on()
-        tags.append(tag)
-    model.tags = tags
+#     # 0) Building the model
+#     model = Model()
+#     model.max_tags_num = 800
 
-    # 3) Launching simulation
-    kernel = Kernel()
-    kernel.context = model
-    kernel.run(start_simulation)
+#     # 1) Building the reader
+#     reader = Reader()
+#     model.reader = reader
 
-simulate_tags()
+#     # 2) Building tags
+#     tag_generator = Generator()
+#     tags = []
+
+#     for i in range(0, model.max_tags_num):
+#         tag = tag_generator.create_tag(i)
+#         tag.setup()
+#         tag._power_on()
+#         tags.append(tag)
+#     model.tags = tags
+
+#     # 3) Launching simulation
+#     kernel = Kernel()
+#     kernel.context = model
+#     kernel.run(start_simulation)
+
+# simulate_tags()
 
 
 
@@ -974,4 +1195,67 @@ simulate_tags()
 
 
 
+
+
+
+
+# def build_transaction(reader, reader_frame, tags):
+#     response = ((tag, tag.receive(reader_frame)) for tag in tags)
+#     tag_frames = [(tag, frame) for (tag, frame) in response
+#                   if frame is not None]
+#     return Transaction(reader, reader_frame, tag_frames, 0)
+
+# def finish_transaction(reader, transaction):
+#     tag, tag_frame = transaction.received_tag_frame()
+#     if tag_frame is not None:
+#         return reader.receive(tag_frame)
+#     else:
+#         return reader.timeout()
+
+# reader = Reader()
+# tag_generator = Generator()
+# tags = []
+
+# for i in range(0, 2000):
+#     tag = tag_generator.create_tag(i)
+#     tag.setup()
+#     tag._power_on()
+#     tags.append(tag)
+
+# cmd_frame = reader.turn_on()
+
+
+# while reader.n_tags == 0:
+#     transaction = build_transaction(reader, cmd_frame, tags)
+#     cmd_frame = finish_transaction(reader, transaction)
+ 
+
+
+def simulate_tags():
+
+    # 0) Building the model
+    model = Model()
+    model.max_tags_num = 800
+
+    # 1) Building the reader
+    reader = Reader()
+    model.reader = reader
+
+    # 2) Building tags
+    tag_generator = Generator()
+    tags = []
+
+    for i in range(0, model.max_tags_num):
+        tag = tag_generator.create_tag(i)
+        tag.setup()
+        tag._power_on()
+        tags.append(tag)
+    model.tags = tags
+
+    # 3) Launching simulation
+    kernel = Kernel()
+    kernel.context = model
+    kernel.run(start_simulation)
+
+simulate_tags()
 
