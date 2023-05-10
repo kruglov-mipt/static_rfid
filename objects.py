@@ -317,6 +317,7 @@ class _ReaderQueryEstimate(_ReaderState):
                     
                     reader.reader_phase = ReaderPhase.IDENTIFIATION
                     #return reader.set_state(Reader.State.QUERY)
+                    reader.backlog = reader.n_tags
                     slot = reader.next_slot()
                     return reader.set_state(slot.first_state)
                     ## do smthing with next state Query
@@ -378,6 +379,7 @@ class _ReaderQueryEstimateRep(_ReaderState):
                     reader.q = int(q) - 1
                     reader.reader_phase = ReaderPhase.IDENTIFIATION
                     reader.stop_round()
+                    reader.backlog = reader.n_tags
                     slot = reader.next_slot()
                     return reader.set_state(slot.first_state)
                     ## do smthing with next state Query
@@ -438,7 +440,14 @@ class _ReaderRound:
                             yield _ReaderSlot(self, j, Reader.State.QREP)
                         break
                     else:    
-                        yield _ReaderSlot(self, i, Reader.State.QREP)            
+                        yield _ReaderSlot(self, i, Reader.State.QREP)
+                reader.backlog = int(reader.backlog - reader.single_slots)
+                if reader.backlog > 0:
+                    qnew = int(np.floor(np.log2(reader.backlog))) + 1
+                    if qnew >= 5:
+                        reader.q = qnew
+
+
         self._reader = reader
         self._slots = slots_gen()
         self._slot = None
@@ -504,6 +513,8 @@ class Reader:
     collision_slots = 0
     single_slots = 0
     empty_slots = 0
+    backlog = 0
+
 
     # Round settings
     reader_phase = ReaderPhase.ESTIMATION
@@ -1040,14 +1051,14 @@ class Transaction(object):
 
         if len(self.replies) == 0:
             self.reader.empty_slots += 1
-            if not self.reader.qadjust_subround:
-                self._reader.manage_query_adjust(SlotStatus.EMPTY)
+            # if not self.reader.qadjust_subround:
+            #     self._reader.manage_query_adjust(SlotStatus.EMPTY)
             return None, None
         
         if len(self.replies) > 1:
             self.reader.collision_slots += 1
-            if not self.reader.qadjust_subround:
-                self._reader.manage_query_adjust(SlotStatus.COLLISION)
+            # if not self.reader.qadjust_subround:
+            #     self._reader.manage_query_adjust(SlotStatus.COLLISION)
             return None, None
 
         if isinstance(self.replies[0][1].reply, std.QueryReply):
