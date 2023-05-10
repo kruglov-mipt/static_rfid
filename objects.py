@@ -404,14 +404,16 @@ class Reader:
     
     def manage_query_adjust(self, slot_status):
         if slot_status == SlotStatus.COLLISION:
-            self.current_q += 0.25
+            c = self.q * (-0.027) + 0.5
+            self.current_q += c
             if round(self.current_q) > self.q:
                 self.upDn = std.UpDn.INCREASE
                 self.set_state(Reader.State.QADJUST)
                 self.state.handle_query_adjust(self)
 
         if slot_status == SlotStatus.EMPTY:
-            self.current_q -= 0.25
+            c = self.q * (-0.027) + 0.5
+            self.current_q -= c
             if round(self.current_q) < self.q:
                 self.upDn = std.UpDn.DECREASE
                 self.set_state(Reader.State.QADJUST)
@@ -882,8 +884,6 @@ def build_transaction(kernel, reader, reader_frame):
     now = kernel.time
     #print(now)
     trans = Transaction(reader, reader_frame, tag_frames, now)
-    if isinstance(trans.command.command, std.QueryAdjust):
-        print(trans.command.command)
     return trans
 
 def finish_transaction(kernel, transaction):
