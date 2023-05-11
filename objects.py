@@ -266,7 +266,7 @@ class _ReaderRound:
             yield _ReaderSlot(self, 0, Reader.State.QUERY)
             for i in range(1, round(pow(2, reader.q))):
                 yield _ReaderSlot(self, i, Reader.State.QREP)
-                if (i + 1) % 8 == 0:
+                if (i + 1) % reader.subround == 0:
                     n = round((reader.single_slots + 2.39 * reader.collision_slots) * round(pow(2, reader.q) / (i+1)  ))
                     if reader.handle_q_change(n) != reader.q:
                         reader.q = reader.handle_q_change(n)
@@ -348,7 +348,8 @@ class Reader:
     collision_slots = 0
     dictionary = {}
     # Round settings
-    q = 5
+    q = 8
+    subround = 16 
     upDn = std.UpDn.NO_CHANGE
     tag_encoding = None
     trext = False
@@ -388,6 +389,23 @@ class Reader:
             13: range(5679, 11356),
             14: range(11356, 22713),
             15: range(22714, 45427)
+        }
+
+        self.subround_dict = {
+            2: 4,
+            3: 4,
+            4: 4,
+            5: 8,
+            6: 8,
+            7: 16,
+            8: 16,
+            9: 32,
+            10: 32,
+            11: 64,
+            12: 64,
+            13: 64,
+            14: 64,
+            15: 64
         }
 
     @property
@@ -455,6 +473,7 @@ class Reader:
         else:
             for r in self.dictionary:
                 if n in self.dictionary.get(r):
+                    self.subround = self.subround_dict.get(r)
                     return r
 
 
@@ -927,7 +946,7 @@ def simulate_tags():
 
     # 0) Building the model
     model = Model()
-    model.max_tags_num = 800
+    model.max_tags_num = 3200
 
     # 1) Building the reader
     reader = Reader()
