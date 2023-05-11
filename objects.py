@@ -90,6 +90,9 @@ class _ReaderQuery(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.empty_slots = 0
+        reader.single_slots = 0
+        reader.collision_slots = 0
         reader.last_rn = None
         cmd = std.Query(reader.dr, reader.tag_encoding, reader.trext,
                         reader.sel, reader.session, reader.target, reader.q)
@@ -260,20 +263,26 @@ class _ReaderRound:
         self._index = index
 
         def slots_gen():
-            # yield _ReaderSlot(self, 0, Reader.State.QUERY)
-            # for i in range(1, round(pow(2, reader.q))):
-            #     yield _ReaderSlot(self, i, Reader.State.QREP)
             yield _ReaderSlot(self, 0, Reader.State.QUERY)
-            reader.qadjust_subround = False
             for i in range(1, round(pow(2, reader.q))):
-                if reader.state == Reader.State.QADJUST:
-                    reader.qadjust_subround = True
-                    yield _ReaderSlot(self, i, Reader.State.QADJUST)
-                    for j in range(1, round(pow(2, reader.q))):
-                        yield _ReaderSlot(self, j, Reader.State.QREP)
-                    break
-                else:    
-                    yield _ReaderSlot(self, i, Reader.State.QREP)
+                yield _ReaderSlot(self, i, Reader.State.QREP)
+                if (i + 1) % 8 == 0:
+                    n = round((reader.single_slots + 2.39 * reader.collision_slots) * round(pow(2, reader.q) / (i+1)  ))
+                    if reader.handle_q_change(n) != reader.q:
+                        reader.q = reader.handle_q_change(n)
+                        break
+        
+            # yield _ReaderSlot(self, 0, Reader.State.QUERY)
+            # reader.qadjust_subround = False
+            # for i in range(1, round(pow(2, reader.q))):
+            #     if reader.state == Reader.State.QADJUST:
+            #         reader.qadjust_subround = True
+            #         yield _ReaderSlot(self, i, Reader.State.QADJUST)
+            #         for j in range(1, round(pow(2, reader.q))):
+            #             yield _ReaderSlot(self, j, Reader.State.QREP)
+            #         break
+            #     else:    
+            #         yield _ReaderSlot(self, i, Reader.State.QREP)
                     
         self._reader = reader
         self._slots = slots_gen()
@@ -333,8 +342,13 @@ class Reader:
     #QADJUST subround flag
     qadjust_subround = False
 
+    #Statistical slot count
+    empty_slots = 0
+    single_slots = 0
+    collision_slots = 0
+    dictionary = {}
     # Round settings
-    q = 4
+    q = 5
     upDn = std.UpDn.NO_CHANGE
     tag_encoding = None
     trext = False
@@ -358,6 +372,23 @@ class Reader:
         # Rounds managers
         self._round = None
         self._round_index = itertools.count()
+
+        self.dictionary = {
+            2: range(0, 6),
+            3: range(6, 12),
+            4: range(12, 23),
+            5: range(23, 45),
+            6: range(45, 89),
+            7: range(89, 178),
+            8: range(178, 356),
+            9: range(356, 711),
+            10: range(711, 1421),
+            11: range(1421, 2840),
+            12: range(2840, 5679),
+            13: range(5679, 11356),
+            14: range(11356, 22713),
+            15: range(22714, 45427)
+        }
 
     @property
     def state(self):
@@ -416,6 +447,16 @@ class Reader:
                 slot = self._round.next_slot()
         return slot
     
+    # Q adjust
+    def handle_q_change(self, n):
+        rng = self.dictionary.get(self.q)
+        if n in rng:
+            return self.q
+        else:
+            for r in self.dictionary:
+                if n in self.dictionary.get(r):
+                    return r
+
 
 class Tag:
     class State(enum.Enum):
@@ -801,18 +842,20 @@ class Transaction(object):
             # self._reader.upDn = std.UpDn.DECREASE
             # self._reader.set_state(Reader.State.QADJUST)
             # self._reader._state.handle_query_adjust(self._reader)
+            self._reader.empty_slots += 1
             return None, None
         
         if len(self.replies) > 1:
-            if not self.reader.qadjust_subround:
-                print('collision!')
-                self._reader.upDn = std.UpDn.INCREASE
-                self._reader.set_state(Reader.State.QADJUST)
-                self._reader._state.handle_query_adjust(self._reader)
+            # if not self.reader.qadjust_subround:
+            #     self._reader.upDn = std.UpDn.INCREASE
+            #     self._reader.set_state(Reader.State.QADJUST)
+            #     self._reader._state.handle_query_adjust(self._reader)
+            self._reader.collision_slots += 1
             return None, None
 
         tag, frame = self.replies[0]
-
+        if isinstance(self.replies[0][1].reply, std.QueryReply):
+            self._reader.single_slots += 1
         return (tag, frame) 
 
 class Model:
@@ -877,9 +920,8 @@ def finish_transaction(kernel, transaction):
     ctx.transaction = build_transaction(kernel, reader, cmd_frame)
     ctx.transaction.timeout_event_id = kernel.schedule(
         transaction.duration, finish_transaction, ctx.transaction)
-    #if isinstance(kernel.context.transaction.command.command, std.Query):
-    #    print(kernel.context.transaction.command.command)
-
+    if isinstance(kernel.context.transaction.command.command, std.Query):
+       print(kernel.context.transaction.command.command)
 
 def simulate_tags():
 
