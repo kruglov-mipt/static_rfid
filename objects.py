@@ -505,6 +505,8 @@ class Reader:
     single_slots = 0
     empty_slots = 0
 
+    all_collisions = 0
+
     # Round settings
     reader_phase = ReaderPhase.ESTIMATION
     l = 1
@@ -1045,6 +1047,7 @@ class Transaction(object):
             return None, None
         
         if len(self.replies) > 1:
+            self.reader.all_collisions += 1
             self.reader.collision_slots += 1
             if not self.reader.qadjust_subround:
                 self._reader.manage_query_adjust(SlotStatus.COLLISION)
@@ -1112,6 +1115,7 @@ def finish_transaction(kernel, transaction):
     # Processing new command (reader frame)
     if len(ctx.reader.epc_bank) == ctx.max_tags_num:
         print(kernel.time)
+        print(ctx.reader.all_collisions)
         return
     ctx.transaction = build_transaction(kernel, reader, cmd_frame)
     ctx.transaction.timeout_event_id = kernel.schedule(
