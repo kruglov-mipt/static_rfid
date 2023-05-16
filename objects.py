@@ -354,6 +354,10 @@ class Reader:
     read_tid_bank = False
     read_tid_words_num = None
     epc_bank = []
+
+    empty_slots = 0
+    single_slots = 0
+    collision_slots = 0
     
     def __init__(self, kernel=None):
         self.kernel = kernel
@@ -404,7 +408,7 @@ class Reader:
     
     def manage_query_adjust(self, slot_status):
         if slot_status == SlotStatus.COLLISION:
-            self.current_q += 0.21
+            self.current_q += 0.21183
             if round(self.current_q) > self.q:
                 self.upDn = std.UpDn.INCREASE
                 self.set_state(Reader.State.QADJUST)
@@ -822,6 +826,7 @@ class Transaction(object):
         #       no matter of SNR. Try to implement this.
         
         if len(self.replies) == 0:
+            self.reader.empty_slots += 1
             if not self.reader.qadjust_subround:
                 # self._reader.upDn = std.UpDn.DECREASE
                 # self._reader.set_state(Reader.State.QADJUST)
@@ -830,6 +835,7 @@ class Transaction(object):
             return None, None
         
         if len(self.replies) > 1:
+            self.reader.collision_slots += 1
             if not self.reader.qadjust_subround:
                 #print('collision!')
                 # self._reader.upDn = std.UpDn.INCREASE
@@ -837,6 +843,9 @@ class Transaction(object):
                 # self._reader._state.handle_query_adjust(self._reader)
                 self._reader.manage_query_adjust(SlotStatus.COLLISION)
             return None, None
+
+        if isinstance(self.replies[0][1].reply, std.QueryReply):
+            self.reader.single_slots += 1
 
         tag, frame = self.replies[0]
 
@@ -882,8 +891,6 @@ def build_transaction(kernel, reader, reader_frame):
     now = kernel.time
     #print(now)
     trans = Transaction(reader, reader_frame, tag_frames, now)
-    if isinstance(trans.command.command, std.QueryAdjust):
-        print(trans.command.command)
     return trans
 
 def finish_transaction(kernel, transaction):
@@ -901,6 +908,7 @@ def finish_transaction(kernel, transaction):
     # Processing new command (reader frame)
     if len(ctx.reader.epc_bank) == ctx.max_tags_num:
         print(kernel.time)
+        print(ctx.reader.single_slots / (ctx.reader.single_slots + ctx.reader.collision_slots + ctx.reader.empty_slots))
         return
     ctx.transaction = build_transaction(kernel, reader, cmd_frame)
     ctx.transaction.timeout_event_id = kernel.schedule(
@@ -913,7 +921,7 @@ def simulate_tags():
 
     # 0) Building the model
     model = Model()
-    model.max_tags_num = 400
+    model.max_tags_num = 100
 
     # 1) Building the reader
     reader = Reader()
