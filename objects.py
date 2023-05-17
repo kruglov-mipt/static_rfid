@@ -90,6 +90,7 @@ class _ReaderQuery(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.all_slots += 1
         reader.single_slots = 0
         reader.idle_slots = 0
         reader.collision_slots = 0
@@ -133,6 +134,7 @@ class _ReaderQREP(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.all_slots += 1
         reader.last_rn = None
         cmd = std.QueryRep(reader.session)
         return std.ReaderFrame(reader.sync, cmd)
@@ -263,22 +265,11 @@ class _ReaderRound:
         self._index = index
 
         def slots_gen():
-            # yield _ReaderSlot(self, 0, Reader.State.QUERY)
-            # for i in range(1, round(pow(2, reader.q))):
-            #     yield _ReaderSlot(self, i, Reader.State.QREP)
             yield _ReaderSlot(self, 0, Reader.State.QUERY)
-            reader.qadjust_subround = False
             for i in range(1, round(pow(2, reader.q))):
                 if i == round(round(pow(2, reader.q)) / 5):
                     reader.handle_chen(i)
-                if reader.state == Reader.State.QADJUST:
-                    reader.qadjust_subround = True
-                    yield _ReaderSlot(self, i, Reader.State.QADJUST)
-                    for j in range(1, round(pow(2, reader.q))):
-                        yield _ReaderSlot(self, j, Reader.State.QREP)
-                    break
-                else:    
-                    yield _ReaderSlot(self, i, Reader.State.QREP)
+                yield _ReaderSlot(self, i, Reader.State.QREP)
                     
         self._reader = reader
         self._slots = slots_gen()
@@ -339,7 +330,7 @@ class Reader:
     qadjust_subround = False
 
     # Round settings
-    q = 4
+    q = 8
     upDn = std.UpDn.NO_CHANGE
     tag_encoding = None
     trext = False
@@ -357,6 +348,8 @@ class Reader:
     collision_slots = 0
     idle_slots = 0
     single_slots = 0
+
+    all_slots = 0
 
 
     def __init__(self, kernel=None):
@@ -428,11 +421,14 @@ class Reader:
         return slot
     
     def handle_chen(self, i):
-        n = round((self.single_slots + 2.39 * self.collision_slots) * round(pow(2, self.q)/ i))
+        n = np.floor((self.single_slots + 2.39 * self.collision_slots) * 5)
         if n > 0:
-            q_optimal = round(np.log2(1.72 * n))
-            if q_optimal != self.q:
-                self.q = q_optimal 
+            q_opt = round(np.log2(1.89 * n))
+            if q_opt != self.q:
+                backlog = n - self.single_slots
+                q_new = round(np.log2(1.89 * backlog))
+                self.q = q_new
+                self.stop_round()
 
 class Tag:
     class State(enum.Enum):
@@ -814,18 +810,10 @@ class Transaction(object):
         # NOTE: if two or more tags reply, their reply is treated as collision
         #       no matter of SNR. Try to implement this.
         if len(self.replies) == 0:
-            # self._reader.upDn = std.UpDn.DECREASE
-            # self._reader.set_state(Reader.State.QADJUST)
-            # self._reader._state.handle_query_adjust(self._reader)
             self.reader.idle_slots += 1
             return None, None
         
         if len(self.replies) > 1:
-            # if not self.reader.qadjust_subround:
-            #     print('collision!')
-            #     self._reader.upDn = std.UpDn.INCREASE
-            #     self._reader.set_state(Reader.State.QADJUST)
-            #     self._reader._state.handle_query_adjust(self._reader)
             self.reader.collision_slots += 1
             return None, None
         
@@ -893,6 +881,7 @@ def finish_transaction(kernel, transaction):
     # Processing new command (reader frame)
     if len(ctx.reader.epc_bank) == ctx.max_tags_num:
         print(kernel.time)
+        print(ctx.reader.all_slots)
         return
     ctx.transaction = build_transaction(kernel, reader, cmd_frame)
     ctx.transaction.timeout_event_id = kernel.schedule(
@@ -905,7 +894,7 @@ def simulate_tags():
 
     # 0) Building the model
     model = Model()
-    model.max_tags_num = 400
+    model.max_tags_num = 1600
 
     # 1) Building the reader
     reader = Reader()
