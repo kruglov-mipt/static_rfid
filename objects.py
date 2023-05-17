@@ -90,6 +90,7 @@ class _ReaderQuery(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.all_tags += 1
         reader.empty_slots = 0
         reader.single_slots = 0
         reader.collision_slots = 0
@@ -133,6 +134,7 @@ class _ReaderQREP(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.all_tags += 1
         reader.last_rn = None
         cmd = std.QueryRep(reader.session)
         return std.ReaderFrame(reader.sync, cmd)
@@ -362,6 +364,8 @@ class Reader:
     read_tid_bank = False
     read_tid_words_num = None
     epc_bank = []
+
+    all_tags = 0
     
     def __init__(self, kernel=None):
         self.kernel = kernel
@@ -915,9 +919,7 @@ def build_transaction(kernel, reader, reader_frame):
     tag_frames = [(tag, frame) for (tag, frame) in response
                   if frame is not None]
     now = kernel.time
-    #print(now)
     trans = Transaction(reader, reader_frame, tag_frames, now)
-    #print(trans.command.command)
     return trans
 
 def finish_transaction(kernel, transaction):
@@ -935,12 +937,13 @@ def finish_transaction(kernel, transaction):
     # Processing new command (reader frame)
     if len(ctx.reader.epc_bank) == ctx.max_tags_num:
         print(kernel.time)
+        print(ctx.reader.all_tags)
         return
     ctx.transaction = build_transaction(kernel, reader, cmd_frame)
     ctx.transaction.timeout_event_id = kernel.schedule(
         transaction.duration, finish_transaction, ctx.transaction)
-    if isinstance(kernel.context.transaction.command.command, std.Query):
-       print(kernel.context.transaction.command.command)
+    # if isinstance(kernel.context.transaction.command.command, std.Query):
+    #    print(kernel.context.transaction.command.command)
 
 def simulate_tags():
 
@@ -969,11 +972,6 @@ def simulate_tags():
     kernel.run(start_simulation)
 
 simulate_tags()
-
-
-
-
-
 
 # def build_transaction(reader, reader_frame, tags):
 #     response = ((tag, tag.receive(reader_frame)) for tag in tags)
