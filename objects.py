@@ -96,6 +96,7 @@ class _ReaderQuery(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.all_slots += 1
         reader.last_rn = None
         cmd = std.Query(reader.dr, reader.tag_encoding, reader.trext,
                         reader.sel, reader.session, reader.target, reader.q)
@@ -136,6 +137,7 @@ class _ReaderQREP(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.all_slots += 1
         reader.last_rn = None
         cmd = std.QueryRep(reader.session)
         return std.ReaderFrame(reader.sync, cmd)
@@ -174,6 +176,7 @@ class _ReaderQADJUST(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.all_slots += 1
         cmd = std.QueryAdjust(reader.session, reader.upDn)
         return std.ReaderFrame(reader.preamble, cmd)
 
@@ -338,6 +341,8 @@ class Reader:
 
     #QADJUST subround flag
     qadjust_subround = False
+
+    all_slots = 0
 
     # Round settings
     q = 4
@@ -901,6 +906,7 @@ def finish_transaction(kernel, transaction):
     # Processing new command (reader frame)
     if len(ctx.reader.epc_bank) == ctx.max_tags_num:
         print(kernel.time)
+        print(ctx.reader.all_slots)
         return
     ctx.transaction = build_transaction(kernel, reader, cmd_frame)
     ctx.transaction.timeout_event_id = kernel.schedule(
@@ -913,7 +919,7 @@ def simulate_tags():
 
     # 0) Building the model
     model = Model()
-    model.max_tags_num = 800
+    model.max_tags_num = 1600
 
     # 1) Building the reader
     reader = Reader()
