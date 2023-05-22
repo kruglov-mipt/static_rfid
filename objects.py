@@ -314,7 +314,7 @@ class _ReaderQueryEstimate(_ReaderState):
                     mu = np.log(1 / (1 - reader.rr))
                     n = np.floor(64 * reader.l * mu)
                     reader.n_tags = n
-                    q = np.floor(np.log2( reader.n_tags * 1.89 ))
+                    q = np.floor(np.log2( reader.n_tags * 1.69 ))
                     reader.q = int(q)
                     
                     reader.reader_phase = ReaderPhase.IDENTIFIATION
@@ -375,8 +375,8 @@ class _ReaderQueryEstimateRep(_ReaderState):
                     mu = np.log(1 / (1 - reader.rr))
                     n = np.floor(64 * reader.l * mu)
                     reader.n_tags = n
-                    print(reader.n_tags)
-                    q = np.floor(np.log2( reader.n_tags * 1.89 ))
+                    print(n)
+                    q = np.floor(np.log2( reader.n_tags * 1.69 ))
                     reader.q = int(q)
                     reader.reader_phase = ReaderPhase.IDENTIFIATION
                     reader.stop_round()
@@ -424,18 +424,13 @@ class _ReaderRound:
 
             if reader.reader_phase == ReaderPhase.IDENTIFIATION:
                 yield _ReaderSlot(self, 0, Reader.State.QUERY)
-                reader.qadjust_subround = False
                 for i in range(1, round(pow(2, reader.q))):
                         yield _ReaderSlot(self, i, Reader.State.QREP)
-                
-                if reader.tmmsa_estimation_flag == False:
-                    reader.tmmsa_estimation_flag = True
-                    #print(reader.single_slots)
-                else:
+                if reader.q > 3:
                     rr = (reader.single_slots + reader.collision_slots) / round(pow(2, reader.q))
                     mu = np.log(1 / (1 - rr))
                     n = np.floor(round(pow(2, reader.q)) * mu)
-                    qnew = int(np.floor(np.log2(1.89 * n)))
+                    qnew = int(np.floor(np.log2(1.69 * (n - reader.single_slots))))
                     reader.q = qnew
 
         self._reader = reader
@@ -1043,14 +1038,10 @@ class Transaction(object):
 
         if len(self.replies) == 0:
             self.reader.empty_slots += 1
-            # if not self.reader.qadjust_subround:
-            #     self._reader.manage_query_adjust(SlotStatus.EMPTY)
             return None, None
         
         if len(self.replies) > 1:
             self.reader.collision_slots += 1
-            # if not self.reader.qadjust_subround:
-            #     self._reader.manage_query_adjust(SlotStatus.COLLISION)
             return None, None
 
         if isinstance(self.replies[0][1].reply, std.QueryReply):
@@ -1120,7 +1111,7 @@ def finish_transaction(kernel, transaction):
     ctx.transaction = build_transaction(kernel, reader, cmd_frame)
     ctx.transaction.timeout_event_id = kernel.schedule(
         transaction.duration, finish_transaction, ctx.transaction)
-    # if isinstance(kernel.context.transaction.command.command, std.QueryEstimate):
+    # if isinstance(kernel.context.transaction.command.command, std.Query):
     #    print(kernel.context.transaction.command.command)
     # if isinstance(kernel.context.transaction.command.command, std.QueryEstimateRep):
     #    print(kernel.context.transaction.command.command)
@@ -1231,7 +1222,7 @@ def simulate_tags():
 
     # 0) Building the model
     model = Model()
-    model.max_tags_num = 200
+    model.max_tags_num = 3200
 
     # 1) Building the reader
     reader = Reader()
