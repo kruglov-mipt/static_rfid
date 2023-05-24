@@ -267,10 +267,11 @@ class _ReaderRound:
         def slots_gen():
             yield _ReaderSlot(self, 0, Reader.State.QUERY)
             for i in range(1, round(pow(2, reader.q))):
-                if i == round(round(pow(2, reader.q)) / 5):
-                    reader.handle_chen(i)
+                # if i == round(round(pow(2, reader.q)) / 5):
+                #     reader.handle_chen(i)
                 yield _ReaderSlot(self, i, Reader.State.QREP)
-                    
+            reader.handle_chen(i)
+
         self._reader = reader
         self._slots = slots_gen()
         self._slot = None
@@ -421,14 +422,25 @@ class Reader:
         return slot
     
     def handle_chen(self, i):
-        n = np.floor((self.single_slots + 2.39 * self.collision_slots) * 5)
-        if n > 0:
-            q_opt = round(np.log2(1.89 * n))
-            if q_opt != self.q:
-                backlog = n - self.single_slots
-                q_new = round(np.log2(1.89 * backlog))
+        n = self.find_k() * self.single_slots + self.find_l()
+        backlog = n - self.single_slots
+        if backlog > 0:
+            q_new = round(np.log2( backlog))
+            if q_new != self.q:
                 self.q = q_new
-                self.stop_round()
+        
+    def find_k(self):
+        c = self.collision_slots
+        l = round(pow(2, self.q))
+        k = 0.2407 * np.log(l + 42.56) + c/( ( 4.344 * l - 16.28) +  (l / (-2.282 - 0.273 * l)) * c )
+        return k
+    
+    def find_l(self):
+        c = self.collision_slots
+        l = round(pow(2, self.q))
+        tg_arg = 1.234 * c * pow(l, -0.9907)
+        d = (1.2592 + 1.513 * l)*np.tan(tg_arg)
+        return d
 
 class Tag:
     class State(enum.Enum):
@@ -894,7 +906,7 @@ def simulate_tags():
 
     # 0) Building the model
     model = Model()
-    model.max_tags_num = 1600
+    model.max_tags_num = 400
 
     # 1) Building the reader
     reader = Reader()
