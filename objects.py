@@ -310,7 +310,7 @@ class _ReaderQueryEstimate(_ReaderState):
 
                 reader.rr = reader.rr / (reader.l * 64)
             
-                if reader.rr < 0.9:
+                if reader.rr < 0.8:
                     mu = np.log(1 / (1 - reader.rr))
                     n = np.floor(64 * reader.l * mu)
                     reader.n_tags = n
@@ -371,11 +371,10 @@ class _ReaderQueryEstimateRep(_ReaderState):
                         reader.rr += 1
 
                 reader.rr = reader.rr / (reader.l * 64)
-                if reader.rr < 0.9:
+                if reader.rr < 0.8:
                     mu = np.log(1 / (1 - reader.rr))
                     n = np.floor(64 * reader.l * mu)
                     reader.n_tags = n
-                    print(n)
                     q = np.floor(np.log2( reader.n_tags * 1.69 ))
                     reader.q = int(q)
                     reader.reader_phase = ReaderPhase.IDENTIFIATION
@@ -1050,198 +1049,3 @@ class Transaction(object):
         tag, frame = self.replies[0]
 
         return (tag, frame) 
-
-class Model:
-    reader = None
-    tags = None
-    transaction = None
-    max_tags_num = None
-
-    def __init__(self):
-        self.reader = Reader()
-        self.tags = []
-        self.transaction = None
-        self.num_tags_simulated = 0
-
-
-def start_simulation(kernel):
-    assert isinstance(kernel.context, Model)
-    ctx = kernel.context
-    ctx.reader.kernel = kernel
-    kernel.call(turn_reader_on, ctx.reader)
-
-
-def turn_reader_on(kernel, reader):
-    ctx = kernel.context
-    
-    cmd_frame = reader.turn_on()
-   
-    # Processing new command (reader frame)
-    transaction = build_transaction(kernel, reader, cmd_frame)
-    ctx.transaction = transaction
-    ctx.transaction.timeout_event_id = kernel.schedule(
-        transaction.duration, finish_transaction, transaction)
-
-
-def build_transaction(kernel, reader, reader_frame):
-    ctx = kernel.context
-    response = ((tag, tag.receive(reader_frame)) for tag in ctx.tags)
-    tag_frames = [(tag, frame) for (tag, frame) in response
-                  if frame is not None]
-    now = kernel.time
-    trans = Transaction(reader, reader_frame, tag_frames, now)
-    return trans
-
-def finish_transaction(kernel, transaction):
-    ctx = kernel.context
-    reader = ctx.reader
-    assert transaction is ctx.transaction
-    tag, frame = transaction.received_tag_frame()
-
-    if frame is not None:
-        cmd_frame = reader.receive(frame)
-    else:
-        cmd_frame = reader.timeout()
-    
-    # Processing new command (reader frame)
-    if len(ctx.reader.epc_bank) == ctx.max_tags_num:
-        print(kernel.time)
-        print(ctx.reader.all_slots)
-        return
-    ctx.transaction = build_transaction(kernel, reader, cmd_frame)
-    ctx.transaction.timeout_event_id = kernel.schedule(
-        transaction.duration, finish_transaction, ctx.transaction)
-    # if isinstance(kernel.context.transaction.command.command, std.Query):
-    #    print(kernel.context.transaction.command.command)
-    # if isinstance(kernel.context.transaction.command.command, std.QueryEstimateRep):
-    #    print(kernel.context.transaction.command.command)
-
-
-# def simulate_tags():
-
-#     # 0) Building the model
-#     model = Model()
-#     model.max_tags_num = 800
-
-#     # 1) Building the reader
-#     reader = Reader()
-#     model.reader = reader
-
-#     # 2) Building tags
-#     tag_generator = Generator()
-#     tags = []
-
-#     for i in range(0, model.max_tags_num):
-#         tag = tag_generator.create_tag(i)
-#         tag.setup()
-#         tag._power_on()
-#         tags.append(tag)
-#     model.tags = tags
-
-#     # 3) Launching simulation
-#     kernel = Kernel()
-#     kernel.context = model
-#     kernel.run(start_simulation)
-
-# simulate_tags()
-
-
-
-
-
-
-# def build_transaction(reader, reader_frame, tags):
-#     response = ((tag, tag.receive(reader_frame)) for tag in tags)
-#     tag_frames = [(tag, frame) for (tag, frame) in response
-#                   if frame is not None]
-#     return Transaction(reader, reader_frame, tag_frames, 0)
-
-# def finish_transaction(reader, transaction):
-#     tag, tag_frame = transaction.received_tag_frame()
-#     if tag_frame is not None:
-#         return reader.receive(tag_frame)
-#     else:
-#         return reader.timeout()
-
-# reader = Reader()
-# tag_generator = Generator()
-# tags = []
-
-# for i in range(0, 4):
-#     tag = tag_generator.create_tag(i)
-#     tag.setup()
-#     tag._power_on()
-#     tags.append(tag)
-
-# cmd_frame = reader.turn_on()
-
-# while len(reader.epc_bank) < 4:
-#     transaction = build_transaction(reader, cmd_frame, tags)
-#     cmd_frame = finish_transaction(reader, transaction)
-#     print(cmd_frame)
-
-
-
-
-
-
-
-# def build_transaction(reader, reader_frame, tags):
-#     response = ((tag, tag.receive(reader_frame)) for tag in tags)
-#     tag_frames = [(tag, frame) for (tag, frame) in response
-#                   if frame is not None]
-#     return Transaction(reader, reader_frame, tag_frames, 0)
-
-# def finish_transaction(reader, transaction):
-#     tag, tag_frame = transaction.received_tag_frame()
-#     if tag_frame is not None:
-#         return reader.receive(tag_frame)
-#     else:
-#         return reader.timeout()
-
-# reader = Reader()
-# tag_generator = Generator()
-# tags = []
-
-# for i in range(0, 2000):
-#     tag = tag_generator.create_tag(i)
-#     tag.setup()
-#     tag._power_on()
-#     tags.append(tag)
-
-# cmd_frame = reader.turn_on()
-
-
-# while reader.n_tags == 0:
-#     transaction = build_transaction(reader, cmd_frame, tags)
-#     cmd_frame = finish_transaction(reader, transaction)
- 
-
-
-def simulate_tags():
-
-    # 0) Building the model
-    model = Model()
-    model.max_tags_num = 3200
-
-    # 1) Building the reader
-    reader = Reader()
-    model.reader = reader
-
-    # 2) Building tags
-    tag_generator = Generator()
-    tags = []
-
-    for i in range(0, model.max_tags_num):
-        tag = tag_generator.create_tag(i)
-        tag.setup()
-        tag._power_on()
-        tags.append(tag)
-    model.tags = tags
-
-    # 3) Launching simulation
-    kernel = Kernel()
-    kernel.context = model
-    kernel.run(start_simulation)
-
-simulate_tags()
