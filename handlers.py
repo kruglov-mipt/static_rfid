@@ -1,4 +1,24 @@
-from objects import Transaction
+
+proto = None
+Transaction = None
+
+def set_transaction_file(protocol):
+    global proto
+    global Transaction
+    proto = protocol
+    match protocol:
+        case 'PEFSA':
+            from objects.pefsa import Transaction
+        case 'CHEN':
+            from objects.chen import Transaction
+        case 'ADAPTIVE':
+            from objects.adaptive import Transaction
+        case 'FAST':
+            from objects.fast import Transaction
+        case 'ILCM':
+            from objects.ilcm import Transaction
+        case 'SUBEP':
+            from objects.subep import Transaction
 
 
 def start_simulation(kernel):
