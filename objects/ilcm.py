@@ -90,6 +90,7 @@ class _ReaderQuery(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.q_values.append(reader.q)
         reader.all_slots += 1
         reader.single_slots = 0
         reader.empty_slots = 0
@@ -330,6 +331,8 @@ class Reader:
     delim = 12.5e-6
 
     temp = std.TempRange.NOMINAL
+
+    q_values = []
 
     #QADJUST subround flag
     qadjust_subround = False

@@ -107,6 +107,7 @@ class _ReaderQuery(_ReaderState):
         return t_cmd + t1 + t3
 
     def enter(self, reader):
+        reader.q_values.append(reader.q)
         reader.all_slots += 1
         reader.single_slots = 0
         reader.collision_slots = 0
@@ -307,13 +308,14 @@ class _ReaderQueryEstimate(_ReaderState):
                     if i != 0:
                         reader.rr += 1
 
-                reader.rr = reader.rr / (reader.l * 64)
+                reader.rr = reader.rr / (reader.l * 96)
             
                 if reader.rr < 0.8:
                     mu = np.log(1 / (1 - reader.rr))
-                    n = np.floor(64 * reader.l * mu)
+                    n = np.floor(96 * reader.l * mu)
+                    print("Tag amount estimation:", n)
                     reader.n_tags = n
-                    q = np.floor(np.log2( reader.n_tags * 1.69 ))
+                    q = np.floor(np.log2( reader.n_tags * 1.73 ))
                     reader.q = int(q)
                     
                     reader.reader_phase = ReaderPhase.IDENTIFIATION
@@ -369,12 +371,13 @@ class _ReaderQueryEstimateRep(_ReaderState):
                     if i != 0:
                         reader.rr += 1
 
-                reader.rr = reader.rr / (reader.l * 64)
+                reader.rr = reader.rr / (reader.l * 96)
                 if reader.rr < 0.8:
                     mu = np.log(1 / (1 - reader.rr))
-                    n = np.floor(64 * reader.l * mu)
+                    n = np.floor(96 * reader.l * mu)
+                    print("Tag amount estimation:", n)
                     reader.n_tags = n
-                    q = np.floor(np.log2( reader.n_tags * 1.69 ))
+                    q = np.floor(np.log2( reader.n_tags * 1.73))
                     reader.q = int(q)
                     reader.reader_phase = ReaderPhase.IDENTIFIATION
                     reader.stop_round()
@@ -440,7 +443,7 @@ class _ReaderRound:
                     else:
                         mu = np.log(1 / (1 - rr))
                         n = np.floor(round(pow(2, reader.q)) * mu)
-                        qnew = int(np.floor(np.log2(1.69 * (n - reader.single_slots))))
+                        qnew = int(np.floor(np.log2(1.73 * (n - reader.single_slots))))
                         reader.q = qnew
 
 
@@ -503,6 +506,8 @@ class Reader:
 
     temp = std.TempRange.NOMINAL
 
+    q_values = []
+
     #QADJUST subround flag
     qadjust_subround = False
 
@@ -510,8 +515,10 @@ class Reader:
     collision_slots = 0
     single_slots = 0
     empty_slots = 0
-    all_slots = 0
 
+    all_slots = 0
+    all_collisions = 0
+    all_empties = 0
 
     # Round settings
     reader_phase = ReaderPhase.ESTIMATION
@@ -558,7 +565,7 @@ class Reader:
     
     def init_sequence(self):
         self.sequence = []
-        for i in range(0, self.l * 64):
+        for i in range(0, self.l * 96):
             self.sequence.append(0)
 
     @property
@@ -854,15 +861,15 @@ class Tag:
         cmd = frame.command
         self._encoding = cmd.m
         self._preamble = std.create_tag_preamble(self._encoding)
-        v = np.random.randint(0, self.tid_bitlen * cmd.l)
-        bit =  v % self.tid_bitlen
+        v = np.random.randint(0, self.epc_bitlen * cmd.l)
+        bit =  v % self.epc_bitlen
         self._sequence = []
-        for i in range(0, self.tid_bitlen):
+        for i in range(0, self.epc_bitlen):
             if i == bit:
                 self._sequence.append(1)
             else:
                 self._sequence.append(0) 
-        self._estimate_slot_number = math.floor(v / self.tid_bitlen)
+        self._estimate_slot_number = math.floor(v / self.epc_bitlen)
         if self._estimate_slot_number == 0:
             self._estimate_slot_number = 1000
             return std.TagFrame(self._preamble, std.QueryEstimateReply(self._sequence))
@@ -1045,15 +1052,17 @@ class Transaction(object):
         if self._reader.reader_phase == ReaderPhase.ESTIMATION:
             for reply in self.replies:
                 for index in range (0, len(reply[1].reply.sequence)):
-                    self._reader.sequence[64 * self._reader.current_l + index] += reply[1].reply.sequence[index]
+                    self._reader.sequence[96 * self._reader.current_l + index] += reply[1].reply.sequence[index]
             return None, self._reader.sequence
 
         if len(self.replies) == 0:
             self.reader.empty_slots += 1
+            self.reader.all_empties += 1
             return None, None
         
         if len(self.replies) > 1:
             self.reader.collision_slots += 1
+            self.reader.all_collisions += 1
             return None, None
 
         if isinstance(self.replies[0][1].reply, std.QueryReply):

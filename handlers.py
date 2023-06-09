@@ -61,8 +61,12 @@ def finish_transaction(kernel, transaction):
     
     # Processing new command (reader frame)
     if len(ctx.reader.epc_bank) == ctx.max_tags_num:
-        print(kernel.time)
-        print(ctx.reader.all_slots)
+        print("Identification time:", kernel.time)
+        print("All slots:", ctx.reader.all_slots - 1)
+        if proto == "PEFSA":
+            print("Collision slots:", ctx.reader.all_collisions)
+            print("Empty slots:", ctx.reader.all_empties)
+            print("Single slots:", ctx.reader.all_slots - ctx.reader.all_collisions - ctx.reader.all_empties - 1)
         return
     ctx.transaction = build_transaction(kernel, reader, cmd_frame)
     ctx.transaction.timeout_event_id = kernel.schedule(
